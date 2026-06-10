@@ -3,127 +3,207 @@ import time
 import pandas as pd
 import random
 from datetime import datetime, date
+import json
+import os
 import streamlit.components.v1 as components
-import plotly.graph_objects as go
 
-# ==========================================
-# セッションステートの初期化
-# ==========================================
-if 'page' not in st.session_state:
-    st.session_state.page = 'dashboard'
+# === 1. 初期設定とデータ保存 ===
+SETTINGS_FILE = "settings.json"
+LOG_FILE = "activity_log.csv"
+
+# 初期設定
+DEFAULT_SETTINGS = {
+    "toeic_date": "2026-05-24",
+    "intern_date": "2026-06-01",
+    "daily_hours_toeic": 3,
+    "daily_hours_intern": 2,
+    "bg_url": "https://images.unsplash.com/photo-1497935586351-b67a49e012bf?q=80&w=2000&auto=format&fit=crop", 
+    "study_list": [
+        "Santa Part7長文の写経", "英語の記事の写経", "Gemini提案英文の写経",
+        "プログラミング(paiza)", "洋楽の本気カラオケ(英語発音)", 
+        "Santa Part3・4のオーバーラッピング", "海外車レビュー記事の音読・写経", 
+        "Santa 単語", "Geminiと面接練習"
+    ],
+    "focus_study_list": ["大学の履修について考える"],
+    "refresh_list": [
+        "料理探し", "読書", "仮眠", "腕立て30回", "腹筋30回", 
+        "ダンベル30回", "洋楽カラオケ", "机の掃除", "床の片づけ", 
+        "掃除機掛け", "スト6 コンボ練習"
+    ]
+}
+
+def load_settings():
+    s = DEFAULT_SETTINGS.copy()
+    if os.path.exists(SETTINGS_FILE):
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            s.update(json.load(f))
+    return s
+
+def save_settings(s):
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=4)
+
+def load_logs():
+    if os.path.exists(LOG_FILE):
+        return pd.read_csv(LOG_FILE).to_dict(orient="records")
+    return []
+
+if 'settings' not in st.session_state: st.session_state.settings = load_settings()
+if 'logs' not in st.session_state: st.session_state.logs = load_logs()
+if 'page' not in st.session_state: st.session_state.page = 'dashboard'
+if 'last_was_refresh' not in st.session_state: st.session_state.last_was_refresh = False
+if 'current_task' not in st.session_state: st.session_state.current_task = None
+if 'start_time' not in st.session_state: st.session_state.start_time = None
+if 'rolled_options' not in st.session_state: st.session_state.rolled_options = None
+if 'mock_exam_done' not in st.session_state: st.session_state.mock_exam_done = False
+if 'compact_mode' not in st.session_state: st.session_state.compact_mode = False
+
 if 'study_time_total' not in st.session_state:
-    st.session_state.study_time_total = 0 
-if 'refresh_time_total' not in st.session_state:
-    st.session_state.refresh_time_total = 0
-if 'last_was_refresh' not in st.session_state:
-    st.session_state.last_was_refresh = False
-if 'logs' not in st.session_state:
-    st.session_state.logs = [] 
-if 'current_task' not in st.session_state:
-    st.session_state.current_task = None
-if 'start_time' not in st.session_state:
-    st.session_state.start_time = None
-if 'rolled_options' not in st.session_state:
-    st.session_state.rolled_options = None
-if 'mock_exam_done' not in st.session_state:
-    st.session_state.mock_exam_done = False
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    s_tot, r_tot = 0, 0
+    for log in st.session_state.logs:
+        if str(log["日付"]).startswith(today_str):
+            if "勉強" in log["カテゴリ"]: s_tot += int(log["経過時間(分)"])
+            elif "気分転換" in log["カテゴリ"]: r_tot += int(log["経過時間(分)"])
+    st.session_state.study_time_total = s_tot
+    st.session_state.refresh_time_total = r_tot
 
-# ==========================================
-# UI/UX カスタムデザイン（CSSインジェクション）
-# ==========================================
+def log_activity(task_name, category, duration, bgm_used, note=""):
+    entry = {
+        "日付": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "カテゴリ": category, "内容": task_name, "BGM": bgm_used,
+        "経過時間(分)": duration, "メモ": note
+    }
+    st.session_state.logs.append(entry)
+    df = pd.DataFrame([entry])
+    if not os.path.exists(LOG_FILE): df.to_csv(LOG_FILE, index=False, encoding="utf-8-sig")
+    else: df.to_csv(LOG_FILE, mode='a', header=False, index=False, encoding="utf-8-sig")
+
+# === 2. 背景とUI/UXデザイン ===
+BG_URL = st.session_state.settings.get("bg_url", DEFAULT_SETTINGS["bg_url"])
+
+components.html(f"""
+<script>
+    const setBg = () => {{
+        const app = window.parent.document.querySelector('.stApp');
+        if(app) {{
+            app.style.backgroundImage = "url('{BG_URL}')";
+            app.style.backgroundSize = "cover";
+            app.style.backgroundPosition = "center";
+            app.style.backgroundRepeat = "no-repeat";
+            app.style.backgroundAttachment = "fixed";
+            app.style.backgroundColor = "transparent";
+        }}
+    }};
+    window.parent.addEventListener('load', setBg);
+    setInterval(setBg, 1000);
+    setBg();
+</script>
+""", height=0)
+
 st.markdown("""
 <style>
-    /* 全体の背景とフォント */
-    .stApp {
-        background-color: #0E1117;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
+    [data-testid="stHeader"] { background-color: transparent !important; }
     
-    /* 上部の数値（メトリクス）をカード風に */
-    div[data-testid="metric-container"] {
-        background-color: #1E1E1E;
-        border: 1px solid #333;
-        padding: 15px 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        border-left: 5px solid #4CAF50;
-        transition: transform 0.2s;
-    }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(76, 175, 80, 0.2);
-    }
-
-    /* ルーレットボタンをネオン風に */
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        border: 2px solid #4CAF50;
-        background-color: transparent;
-        color: #4CAF50;
-        font-weight: bold;
-        font-size: 1.2rem;
-        padding: 10px 24px;
+    .block-container {
+        background: rgba(14, 17, 23, 0.75) !important;
+        border-radius: 15px; padding: 2rem !important; margin-top: 2rem;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
         transition: all 0.3s ease;
     }
-    .stButton>button:hover {
-        background-color: #4CAF50;
-        color: #000;
-        box-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
-        transform: scale(1.02);
-    }
-    
-    /* 終了ボタン（赤色） */
-    button[kind="primary"] {
-        border: 2px solid #ff4b4b !important;
-        color: #ff4b4b !important;
-    }
-    button[kind="primary"]:hover {
-        background-color: #ff4b4b !important;
-        color: #fff !important;
-        box-shadow: 0 0 15px rgba(255, 75, 75, 0.5) !important;
+
+    [data-testid="stSidebar"] {
+        background: rgba(14, 17, 23, 0.65) !important;
+        backdrop-filter: blur(15px); border-right: 1px solid rgba(255,255,255,0.1);
     }
 
-    /* UI改修: マイルストーンカードのリッチ化とパルスアニメーション */
-    @keyframes pulse {
-        0% { transform: scale(1); text-shadow: 0 0 10px rgba(255, 235, 59, 0.5); }
-        50% { transform: scale(1.03); text-shadow: 0 0 25px rgba(255, 235, 59, 1); }
-        100% { transform: scale(1); text-shadow: 0 0 10px rgba(255, 235, 59, 0.5); }
+    * { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+    div[data-testid="metric-container"] {
+        background-color: rgba(30, 30, 30, 0.7); border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 15px; border-radius: 10px; border-left: 5px solid #4CAF50;
     }
+    
+    .stButton>button {
+        border-radius: 8px; border: 2px solid #4CAF50; background-color: rgba(0,0,0,0.5);
+        color: #4CAF50; font-weight: bold; font-size: 1.2rem; backdrop-filter: blur(5px);
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover { background-color: #4CAF50; color: #000; box-shadow: 0 0 15px rgba(76,175,80,0.8); }
+    
+    button[kind="primary"] { border: 2px solid #ff4b4b !important; color: #ff4b4b !important; }
+    button[kind="primary"]:hover { background-color: #ff4b4b !important; color: #fff !important; box-shadow: 0 0 15px rgba(255,75,75,0.8) !important; }
+
+    @keyframes pulse { 0% {transform: scale(1); text-shadow: 0 0 10px rgba(255,235,59,0.5);} 50% {transform: scale(1.03); text-shadow: 0 0 25px rgba(255,235,59,1);} 100% {transform: scale(1); text-shadow: 0 0 10px rgba(255,235,59,0.5);} }
+    
     .milestone-card {
-        background: linear-gradient(135deg, #1e1e1e 0%, #2a2a2a 100%);
-        border: 1px solid #444;
-        border-left: 6px solid #ffeb3b;
-        padding: 20px;
-        border-radius: 12px;
-        text-align: center;
-        box-shadow: 0 8px 16px rgba(0,0,0,0.5);
-        margin-top: 10px;
+        background: linear-gradient(135deg, rgba(30,30,30,0.8) 0%, rgba(42,42,42,0.8) 100%);
+        border: 1px solid rgba(255,255,255,0.1); border-left: 6px solid #ffeb3b;
+        padding: 20px; border-radius: 12px; text-align: center; margin-top: 10px;
     }
-    .glowing-hours {
-        animation: pulse 2s infinite;
-        color: #ffeb3b;
-        font-size: 3.5rem;
-        font-weight: 900;
-        line-height: 1.2;
-        margin-top: 5px;
-    }
+    .glowing-hours { animation: pulse 2s infinite; color: #ffeb3b; font-size: 3rem; font-weight: bold; margin-top: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# スト6 コンボ練習アプリのHTML/JSコード
-# ==========================================
+if st.session_state.page == 'active' and st.session_state.compact_mode:
+    st.markdown("""
+    <style>
+        .block-container {
+            background: transparent !important;
+            box-shadow: none !important;
+            border: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            padding-top: 0rem !important;
+            padding-left: 1rem !important;
+        }
+        .stButton>button {
+            padding: 4px 10px !important;
+            font-size: 1rem !important;
+            width: auto !important;
+            background-color: rgba(0,0,0,0.6) !important;
+            color: #fff !important;
+            border-color: rgba(255,255,255,0.2) !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+# === 3. YouTubeプレイヤー ===
+BGM_PLAYER_HTML = """
+<div style="background: rgba(0,0,0,0.4); padding: 15px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); color: white;">
+    <h4 style="margin-top: 0; text-align: center; color: #eee;">🎧 環境音コントロール</h4>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button onclick="playVid('cafe')" style="padding:10px; border-radius:5px; background:rgba(139,69,19,0.3); color:white; border:1px solid #8B4513; cursor:pointer;">☕ カフェ</button>
+        <button onclick="playVid('chat')" style="padding:10px; border-radius:5px; background:rgba(210,105,30,0.3); color:white; border:1px solid #D2691E; cursor:pointer;">🗣️ 雑踏</button>
+        <button onclick="playVid('relax')" style="padding:10px; border-radius:5px; background:rgba(70,130,180,0.3); color:white; border:1px solid #4682B4; cursor:pointer;">🐋 波と鯨</button>
+        <button onclick="stopVid()" style="padding:10px; border-radius:5px; background:rgba(255,75,75,0.2); color:white; border:1px solid #ff4b4b; cursor:pointer;">🔇 無音</button>
+    </div>
+    <div id="ytplayer" style="display:none;"></div>
+    <script>
+        var tag = document.createElement('script'); tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0]; firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        var player;
+        function onYouTubeIframeAPIReady() { player = new YT.Player('ytplayer', { height: '0', width: '0', playerVars: { 'autoplay': 0, 'controls': 0 } }); }
+        const vids = { 'cafe': 'e_04ZrNroTo', 'chat': 'bZ2XhA_kXYQ', 'relax': 'vPhg6sc1Mk4' };
+        function playVid(t) { if(player) { player.loadPlaylist({playlist:[vids[t]], index:0}); player.setLoop(true); } }
+        function stopVid() { if(player) player.stopVideo(); }
+    </script>
+</div>
+"""
+
+# === ★復活: スト6 コンボ練習アプリ (フル実装) ===
 SF6_HTML_CODE = """
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>SF6 Command Analyzer</title>
 <style>
-  body { background-color: #121212; color: #fff; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 10px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; margin: 0;}
+  body { background-color: rgba(18,18,18,0.9); color: #fff; font-family: 'Segoe UI', sans-serif; padding: 10px; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; margin: 0; border-radius: 10px;}
   #status { color: #ffeb3b; margin-bottom: 10px; font-size: 1.2em; font-family: monospace; }
-  .combo-panel { background-color: #1e1e1e; border: 2px solid #4caf50; border-radius: 8px; padding: 15px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px; }
+  .combo-panel { background-color: rgba(30,30,30,0.8); border: 2px solid #4caf50; border-radius: 8px; padding: 15px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px; }
   .combo-header { display: flex; justify-content: space-between; align-items: center; }
   .combo-header select { background: #333; color: white; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; font-size: 1em; }
   .combo-progress { font-size: 1.4em; font-weight: bold; text-align: center; padding: 10px; background: #111; border-radius: 6px; }
@@ -138,7 +218,7 @@ SF6_HTML_CODE = """
   .btn-icon { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
   .btn-p { background: linear-gradient(135deg, #f44336, #b71c1c); color: white; border: 2px solid #ffcdd2;}
   .btn-k { background: linear-gradient(135deg, #2196f3, #0d47a1); color: white; border: 2px solid #bbdefb;}
-  .history-panel { width: 220px; background-color: #1e1e1e; border: 2px solid #333; border-radius: 8px; padding: 10px; overflow-y: hidden; display: flex; flex-direction: column; }
+  .history-panel { width: 220px; background-color: rgba(30,30,30,0.8); border: 2px solid #333; border-radius: 8px; padding: 10px; overflow-y: hidden; display: flex; flex-direction: column; }
   .history-panel h3 { margin: 0 0 10px 0; font-size: 0.9em; color: #888; text-align: center; border-bottom: 1px solid #333; padding-bottom: 5px; }
   #history-list { display: flex; flex-direction: column; gap: 4px; }
   .history-item { display: flex; align-items: center; justify-content: space-between; background-color: #2a2a2a; padding: 6px 12px; border-radius: 6px; border-left: 4px solid #444; }
@@ -147,7 +227,7 @@ SF6_HTML_CODE = """
   .history-item.kick-item { border-left-color: #2196f3; }
   .icon-container { display: flex; align-items: center; justify-content: center; width: 30px; }
   .frame-text { font-family: monospace; font-size: 1.1em; color: #bbb; width: 50px; text-align: right; }
-  .log-panel { flex: 1; background-color: #1e1e1e; border: 2px solid #333; border-radius: 8px; padding: 15px; overflow-y: auto; }
+  .log-panel { flex: 1; background-color: rgba(30,30,30,0.8); border: 2px solid #333; border-radius: 8px; padding: 15px; overflow-y: auto; }
   .log-panel h3 { margin: 0 0 15px 0; font-size: 1em; color: #888; border-bottom: 1px solid #333; padding-bottom: 5px;}
   .success { margin-bottom: 12px; padding: 12px; border-left: 6px solid #4caf50; background: linear-gradient(90deg, rgba(76, 175, 80, 0.15) 0%, rgba(30, 30, 30, 0) 100%); animation: fadein 0.3s; border-radius: 4px;}
   .sa-success { border-left-color: #ff9800; background: linear-gradient(90deg, rgba(255, 152, 0, 0.15) 0%, rgba(30, 30, 30, 0) 100%); }
@@ -373,419 +453,337 @@ SF6_HTML_CODE = """
 </html>
 """
 
-# ==========================================
-# リスト定義
-# ==========================================
-STUDY_BASE_LIST = [
-    "Santa Part7長文の写経", 
-    "英語の記事の写経", 
-    "Gemini提案英文の写経", 
-    "プログラミング(paiza)",
-    "洋楽の本気カラオケ(英語発音)",
-    "Santa Part3・4のオーバーラッピング",
-    "海外車レビュー記事の音読・写経",
-    "Santa 単語",
-    "Geminiと面接練習"
-]
-
-def get_current_study_pool():
-    pool = list(STUDY_BASE_LIST)
-    pool.extend(["大学の履修について考える"] * 3)
-    if not st.session_state.mock_exam_done:
-        pool.append("TOEIC模擬試験(2時間)")
+# === 4. メインロジック ===
+def get_pool():
+    pool = list(st.session_state.settings["study_list"])
+    for t in st.session_state.settings.get("focus_study_list", []): pool.extend([t]*3)
+    if not st.session_state.mock_exam_done: pool.append("TOEIC模擬試験(2時間)")
     return pool
 
-REFRESH_BASE_LIST = [
-    "料理探し", "読書", "仮眠", "腕立て30回",
-    "腹筋30回", "ダンベル30回", "洋楽カラオケ",
-    "机の掃除", "床の片づけ", "掃除機掛け", "スト6 コンボ練習"
-]
-
 GAME_LIST = ["イナイレ", "スト６", "バウンティ", "ドラゴンボールスクアドラ"]
-
-BGM_LIST = ["日本語ラジオ", "英語ラジオ", "カフェ", "雨音"]
 SOS_LIST = ["瞑想", "深呼吸", "腹筋30回", "昼寝", "読書", "Geminiと話す"]
 
-def log_activity(task_name, category, duration, bgm_used, note=""):
-    st.session_state.logs.append({
-        "日付": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "カテゴリ": category,
-        "内容": task_name,
-        "BGM": bgm_used,
-        "経過時間(分)": duration,
-        "メモ": note
-    })
+with st.sidebar:
+    components.html(BGM_PLAYER_HTML, height=270)
+    st.divider()
+    app_mode = st.radio("🔄 モード切替", ["🚀 集中モード (Use)", "🛠️ 編集モード (Edit)"])
+    st.divider()
+    st.write(f"📁 記録数: {len(st.session_state.logs)}件")
+    if st.session_state.logs:
+        csv = pd.DataFrame(st.session_state.logs).to_csv(index=False).encode('utf-8-sig')
+        st.download_button("履歴ダウンロード", csv, "activity_log.csv", "text/csv")
+    if app_mode == "🛠️ 編集モード (Edit)" and st.button("全データリセット"):
+        st.session_state.logs = []
+        if os.path.exists(LOG_FILE): os.remove(LOG_FILE)
+        st.rerun()
 
-# ==========================================
-# 画面1: ダッシュボード
-# ==========================================
+# ----------------------------------------------------
+# ダッシュボード画面
+# ----------------------------------------------------
 if st.session_state.page == 'dashboard':
-    st.title("フォーカス＆ルーレット")
+    st.title("☕ Focus & Cafe Roulette")
+    s = st.session_state.settings
     
-    # ----------------------------------------------------
-    # UI改修: マイルストーン設定（タブ化による整理）
-    # ----------------------------------------------------
-    with st.expander("⚙️ マイルストーン設定（日付と1日の作業時間）", expanded=True):
-        tab1, tab2 = st.tabs(["📘 TOEIC", "💼 夏インターン"])
-        
-        with tab1:
-            col_d1, col_h1 = st.columns(2)
-            with col_d1:
-                toeic_date = st.date_input("📅 ターゲット日", value=date(2026, 5, 24), key="t_date")
-            with col_h1:
-                daily_hours_toeic = st.number_input("⏱️ 1日あたりの作業時間 (時間)", min_value=1, max_value=24, value=3, step=1, key="t_hours")
-                
-        with tab2:
-            col_d2, col_h2 = st.columns(2)
-            with col_d2:
-                intern_date = st.date_input("📅 ターゲット日", value=date(2026, 6, 1), key="i_date")
-            with col_h2:
-                daily_hours_intern = st.number_input("⏱️ 1日あたりの作業時間 (時間)", min_value=1, max_value=24, value=2, step=1, key="i_hours")
+    if app_mode == "🛠️ 編集モード (Edit)":
+        with st.expander("⚙️ 設定パネル", expanded=True):
+            new_bg = st.text_input("🖼️ 背景画像のURL (画像アドレスを貼り付け)", value=s.get("bg_url", ""))
+            
+            t1, t2 = st.tabs(["TOEIC", "インターン"])
+            with t1:
+                d1 = st.date_input("ターゲット日", datetime.strptime(s["toeic_date"], "%Y-%m-%d").date(), key="d1")
+                h1 = st.number_input("1日の時間", 1, 24, s["daily_hours_toeic"], key="h1")
+            with t2:
+                d2 = st.date_input("ターゲット日", datetime.strptime(s["intern_date"], "%Y-%m-%d").date(), key="d2")
+                h2 = st.number_input("1日の時間", 1, 24, s["daily_hours_intern"], key="h2")
+            
+            c1, c2, c3 = st.columns(3)
+            with c1: n_s = st.text_area("通常勉強", "\n".join(s["study_list"]))
+            with c2: n_f = st.text_area("🔥 重点(3倍)", "\n".join(s.get("focus_study_list",[])))
+            with c3: n_r = st.text_area("気分転換", "\n".join(s["refresh_list"]))
+            
+            if st.button("💾 保存して適用", type="primary"):
+                s["bg_url"] = new_bg
+                s["toeic_date"] = d1.strftime("%Y-%m-%d")
+                s["intern_date"] = d2.strftime("%Y-%m-%d")
+                s["daily_hours_toeic"], s["daily_hours_intern"] = h1, h2
+                s["study_list"] = [x.strip() for x in n_s.split("\n") if x.strip()]
+                s["focus_study_list"] = [x.strip() for x in n_f.split("\n") if x.strip()]
+                s["refresh_list"] = [x.strip() for x in n_r.split("\n") if x.strip()]
+                save_settings(s)
+                st.success("保存完了！次回も引き継がれます。")
+                time.sleep(1)
+                st.rerun()
 
-    # カウントダウン計算
-    today = datetime.now().date()
-    days_to_toeic = max((toeic_date - today).days, 0)
-    days_to_intern = max((intern_date - today).days, 0)
+    td = datetime.now().date()
+    dt = max((datetime.strptime(s["toeic_date"], "%Y-%m-%d").date() - td).days, 0)
+    di = max((datetime.strptime(s["intern_date"], "%Y-%m-%d").date() - td).days, 0)
 
-    # ----------------------------------------------------
-    # マイルストーン表示
-    # ----------------------------------------------------
-    st.subheader("🏁 デッドライン・マイルストーン")
     c1, c2 = st.columns(2)
-    
     with c1:
-        st.metric("TOEIC L&R 公開テストまで", f"あと {days_to_toeic} 日", delta_color="inverse")
-        st.caption(f"📅 ターゲット日: {toeic_date.strftime('%Y-%m-%d')} (目標800点)")
-        st.markdown(f"""
-        <div class='milestone-card'>
-            <div style='font-size: 1.1rem; color: #ccc; font-weight: normal;'>🔥 残り作業可能時間</div>
-            <div class='glowing-hours'>{days_to_toeic * daily_hours_toeic} <span style='font-size: 1.5rem; color: #fff; text-shadow: none;'>時間</span></div>
-        </div>
-        """, unsafe_allow_html=True)
-        
+        st.markdown(f"<div class='milestone-card'><div style='color:#ccc;'>TOEIC ({s['toeic_date']}) まであと {dt} 日<br>🔥 残り作業可能</div><div class='glowing-hours'>{dt * s['daily_hours_toeic']} <span style='font-size:1.5rem;color:white;'>時間</span></div></div>", unsafe_allow_html=True)
     with c2:
-        st.metric("夏インターン選考ピークまで", f"あと {days_to_intern} 日", delta_color="inverse")
-        st.caption(f"📅 ターゲット日: {intern_date.strftime('%Y-%m-%d')} (ES提出〆切ラッシュ)")
-        st.markdown(f"""
-        <div class='milestone-card'>
-            <div style='font-size: 1.1rem; color: #ccc; font-weight: normal;'>🔥 残り作業可能時間</div>
-            <div class='glowing-hours'>{days_to_intern * daily_hours_intern} <span style='font-size: 1.5rem; color: #fff; text-shadow: none;'>時間</span></div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"<div class='milestone-card'><div style='color:#ccc;'>インターン ({s['intern_date']}) まであと {di} 日<br>🔥 残り作業可能</div><div class='glowing-hours'>{di * s['daily_hours_intern']} <span style='font-size:1.5rem;color:white;'>時間</span></div></div>", unsafe_allow_html=True)
 
     st.divider()
     
-    # ----------------------------------------------------
-    # 今日の進捗の可視化（円グラフ）
-    # ----------------------------------------------------
     st.subheader("📊 今日の進捗")
-    
     target_time = st.number_input("今日の目標勉強時間(分)", min_value=30, value=180, step=30)
-    
     current_study = st.session_state.study_time_total
     current_refresh = st.session_state.refresh_time_total
     
     progress_percent = min(current_study / target_time, 1.0) if target_time > 0 else 1.0
     remaining_time = max(0, target_time - current_study)
+    
+    # 角度を計算（360度中の何パーセントか）
+    deg = int(progress_percent * 360)
 
-    fig = go.Figure(go.Pie(
-        values=[current_study, remaining_time] if current_study < target_time else [current_study],
-        labels=["勉強済み", "残り目標"] if current_study < target_time else ["目標達成!"],
-        hole=0.75,
-        marker=dict(
-            colors=["#4CAF50", "#2b2b2b"] if current_study < target_time else ["#4CAF50"],
-            line=dict(color="#0E1117", width=2)
-        ),
-        textinfo="none",
-        hoverinfo="label+value"
-    ))
-    
-    fig.update_layout(
-        showlegend=False,
-        margin=dict(t=10, b=10, l=10, r=10),
-        height=200,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        annotations=[dict(
-            text=f"<b>{int(progress_percent*100)}%</b>", 
-            x=0.5, y=0.5, font_size=36, font_color="#4CAF50", showarrow=False
-        )]
-    )
-
-    col1, col2, col3 = st.columns([1.2, 1, 1])
-    with col1:
-        st.plotly_chart(fig, use_container_width=True)
-    with col2:
-        st.write("<br>", unsafe_allow_html=True)
-        st.metric("今日の勉強時間", f"{current_study} 分")
-        st.caption(f"目標まであと: {remaining_time} 分")
-    with col3:
-        st.write("<br>", unsafe_allow_html=True)
-        st.metric("今日の気分転換", f"{current_refresh} 分")
-
-    st.divider()
-    
-    # ----------------------------------------------------
-    # ロック解除判定
-    # ----------------------------------------------------
-    current_hour = datetime.now().hour
-    current_study = st.session_state.study_time_total
-    
-    is_time_ok = (current_hour >= 20 or current_hour <= 3)
-    is_study_ok = (current_study >= target_time)
-    can_play_game = is_time_ok and is_study_ok
-    
-    if can_play_game:
-        st.success("🎉 解放条件クリア！ルーレットに「本物のゲーム」が追加されています！")
-    else:
-        st.info(f"🔒 【ゲーム解放までの道のり】\n・勉強時間: {current_study} / {target_time}分以上\n・時間帯: 現在 {current_hour}時 (20時以降に解放)")
-
-    # ----------------------------------------------------
-    # ルーレット処理
-    # ----------------------------------------------------
-    if st.button("🎲 ルーレットを回す！", use_container_width=True):
-        study_pool = get_current_study_pool()
-        if st.session_state.last_was_refresh:
-            st.session_state.rolled_options = {
-                "勉強": random.choice(study_pool),
-                "気分転換": "なし（連続プレイ防止のためお休み）",
-                "BGM": random.choice(BGM_LIST)
-            }
-        else:
-            refresh_pool = REFRESH_BASE_LIST + GAME_LIST if can_play_game else REFRESH_BASE_LIST
-            st.session_state.rolled_options = {
-                "勉強": random.choice(study_pool),
-                "気分転換": random.choice(refresh_pool),
-                "BGM": random.choice(BGM_LIST)
-            }
-        
-    if st.session_state.rolled_options:
-        opts = st.session_state.rolled_options
-        st.subheader("🎲 今回の選択肢")
-        
-        with st.form("selection_form"):
-            st.write("どっちをやる？")
-            
-            choices = [f"【勉強】 {opts['勉強']}"]
-            
-            if not st.session_state.last_was_refresh:
-                choices.append(f"【気分転換】 {opts['気分転換']}")
-            else:
-                st.warning("⚠️ 前回、気分転換を実行したため、今回は強制的に「勉強」になります。机に向かいましょう！")
-                
-            selected_main = st.radio("実行するタスクを選んでください:", choices)
-            
-            st.write("---")
-            st.write(f"🎧 今回のBGM: **{opts['BGM']}**")
-            use_bgm = st.checkbox("このBGMを使用する（チェックなしの場合は無音として記録）", value=True)
-            
-            submitted = st.form_submit_button("この内容でスタート！")
-            
-            if submitted:
-                cat = "勉強" if "【勉強】" in selected_main else "気分転換"
-                task_name = selected_main.replace(f"【{cat}】 ", "")
-                
-                if task_name == "TOEIC模擬試験(2時間)":
-                    task_duration = 120
-                    st.session_state.mock_exam_done = True
-                elif cat == "勉強":
-                    task_duration = random.randint(30, 60)
-                else:
-                    task_duration = random.randint(15, 30)
-                
-                st.session_state.current_task = {
-                    "カテゴリ": cat,
-                    "タスク": task_name,
-                    "BGM": opts['BGM'] if use_bgm else "使用せず",
-                    "duration": task_duration
-                }
-                st.session_state.start_time = time.time()
-                st.session_state.last_was_refresh = (cat == "気分転換")
-                
-                st.session_state.rolled_options = None 
-                st.session_state.page = 'active'
-                st.rerun()
-
-# ==========================================
-# 画面2: アクティブ（集中モード＆特殊ロック）
-# ==========================================
-elif st.session_state.page == 'active':
-    task = st.session_state.current_task
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(f"<h1 style='text-align: center; font-size: 3rem;'>{task['タスク']}</h1>", unsafe_allow_html=True)
-    
-    if task['タスク'] == "スト6 コンボ練習":
-        st.info("🎮 スト6 コマンド練習モードがアクティブです！（※キーボード操作の場合、下の黒い画面を一度クリックしてから入力してください）")
-        components.html(SF6_HTML_CODE, height=600, scrolling=True)
-
-    duration_ms = task['duration'] * 60 * 1000
-    show_timer_js = "true" if task['カテゴリ'] == "気分転換" else "false"
-    
-    js_code = f"""
-    <div id="timer-box" style="text-align: center; margin-top: 20px;">
-        <div id="countdown-timer" style="font-size: 6rem; font-weight: bold; color: #ff4b4b; font-family: monospace;"></div>
-        <div id="alarm-msg" style="display: none; font-size: 4rem; font-weight: bold; color: white; background-color: red; padding: 20px; border-radius: 10px;">⏰ 終了時間です！</div>
+    # ★ 完全にバグらない「CSS製ドーナツ型円グラフ」
+    circle_html = f"""
+    <div style="display: flex; justify-content: center; align-items: center; padding: 10px;">
+        <div style="
+            width: 180px; height: 180px; border-radius: 50%;
+            background: conic-gradient(#4CAF50 {deg}deg, rgba(255,255,255,0.1) {deg}deg);
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        ">
+            <div style="
+                width: 140px; height: 140px; border-radius: 50%;
+                background-color: rgba(20, 24, 30, 0.95);
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+            ">
+                <span style="font-size: 2.5rem; font-weight: bold; color: #4CAF50;">{int(progress_percent*100)}%</span>
+            </div>
+        </div>
     </div>
-
-    <script>
-    if (!sessionStorage.getItem('startTime')) {{
-        sessionStorage.setItem('startTime', Date.now());
-    }}
-    
-    const startTime = parseInt(sessionStorage.getItem('startTime'));
-    const durationMs = {duration_ms};
-    const endTime = startTime + durationMs;
-    const showTimer = {show_timer_js};
-    
-    const timerDisplay = document.getElementById('countdown-timer');
-    const alarmMsg = document.getElementById('alarm-msg');
-    
-    let endBtn = null;
-    let studyEndMsg = null;
-    
-    const findButtonInterval = setInterval(() => {{
-        try {{
-            const parentDoc = window.parent.document;
-            const buttons = Array.from(parentDoc.querySelectorAll('button'));
-            endBtn = buttons.find(b => b.innerText.includes('終了して記録する'));
-            
-            if (endBtn) {{
-                if (!showTimer) {{
-                    studyEndMsg = parentDoc.getElementById('study-end-msg');
-                    if (!studyEndMsg) {{
-                        studyEndMsg = parentDoc.createElement('div');
-                        studyEndMsg.id = 'study-end-msg';
-                        studyEndMsg.innerText = '✅ 規定時間が終了しました！記録して終了できます。';
-                        studyEndMsg.style.color = '#d32f2f';
-                        studyEndMsg.style.fontWeight = 'bold';
-                        studyEndMsg.style.fontSize = '1.2rem';
-                        studyEndMsg.style.marginBottom = '15px';
-                        studyEndMsg.style.padding = '10px';
-                        studyEndMsg.style.border = '2px solid #ef5350';
-                        studyEndMsg.style.borderRadius = '5px';
-                        studyEndMsg.style.backgroundColor = '#ffebee';
-                        studyEndMsg.style.textAlign = 'center';
-                        studyEndMsg.style.display = 'none';
-                        endBtn.parentNode.insertBefore(studyEndMsg, endBtn);
-                    }}
-                    
-                    const nowInit = Date.now();
-                    if (nowInit < endTime) {{
-                        endBtn.style.display = 'none';
-                    }}
-                }}
-                clearInterval(findButtonInterval);
-            }}
-        }} catch(e) {{
-            console.error("DOM Access Error", e);
-            clearInterval(findButtonInterval);
-        }}
-    }}, 100);
-    
-    function playBeep() {{
-        try {{
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioCtx.createOscillator();
-            oscillator.type = 'square';
-            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
-            oscillator.connect(audioCtx.destination);
-            oscillator.start();
-            setTimeout(() => {{ oscillator.stop(); }}, 1500);
-        }} catch(e) {{ console.log("Audio play failed"); }}
-    }}
-
-    const checkInterval = setInterval(() => {{
-        const now = Date.now();
-        const remain = Math.max(0, endTime - now);
-        
-        if (showTimer) {{
-            const minutes = Math.floor(remain / 60000).toString().padStart(2, '0');
-            const seconds = Math.floor((remain % 60000) / 1000).toString().padStart(2, '0');
-            timerDisplay.innerText = minutes + ":" + seconds;
-
-            if (now >= endTime && !sessionStorage.getItem('endPlayed')) {{
-                clearInterval(checkInterval);
-                sessionStorage.setItem('endPlayed', 'true');
-                timerDisplay.style.display = 'none';
-                alarmMsg.style.display = 'inline-block';
-                playBeep();
-                setInterval(() => {{
-                    document.body.style.backgroundColor = document.body.style.backgroundColor === 'red' ? 'white' : 'red';
-                }}, 500);
-            }}
-        }} else {{
-            timerDisplay.innerText = "予定時間: ？？？ 分（見事達成するまで終了ボタンは出現しません）";
-            timerDisplay.style.fontSize = "1.5rem";
-            timerDisplay.style.color = "gray";
-            
-            if (now >= endTime) {{
-                clearInterval(checkInterval);
-                sessionStorage.setItem('endPlayed', 'true');
-                if (endBtn) endBtn.style.display = 'inline-flex';
-                if (studyEndMsg) studyEndMsg.style.display = 'block';
-            }}
-        }}
-    }}, 250);
-    </script>
     """
     
-    components.html(js_code, height=200)
+    c1, c2, c3 = st.columns([1.2, 1, 1])
+    with c1: 
+        st.markdown(circle_html, unsafe_allow_html=True)
+    with c2: 
+        st.write("<br><br>", unsafe_allow_html=True)
+        st.metric("今日の勉強時間", f"{current_study} 分")
+        st.caption(f"目標まであと: {remaining_time} 分")
+    with c3: 
+        st.write("<br><br>", unsafe_allow_html=True)
+        st.metric("今日の気分転換", f"{st.session_state.refresh_time_total} 分")
 
-    # --- ボタン類 ---
     st.divider()
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("■ 終了して記録する", use_container_width=True, type="primary"):
-            elapsed_minutes = int((time.time() - st.session_state.start_time) / 60)
-            if task['カテゴリ'] == "勉強":
-                st.session_state.study_time_total += elapsed_minutes
-            else:
-                st.session_state.refresh_time_total += elapsed_minutes
-                
-            log_activity(task['タスク'], task['カテゴリ'], elapsed_minutes, task['BGM'])
-            
-            components.html("<script>sessionStorage.clear();</script>", height=0)
-            time.sleep(0.5)
-            
-            st.session_state.page = 'dashboard'
+    can_game = (datetime.now().hour >= 20 or datetime.now().hour <= 3) and (current_study >= target_time)
+    if can_game: st.success("🎉 ゲーム解放条件クリア！")
+    else: st.info(f"🔒 ゲーム解放まで: 勉強 {current_study}/{target_time}分 & 20時以降")
+
+    is_rolled = st.session_state.rolled_options is not None
+    if st.button("🎲 カフェルーレットを回す！", use_container_width=True, disabled=is_rolled):
+        st.session_state.rolled_options = {
+            "勉強": random.choice(get_pool()),
+            "気分転換": "なし(連続お休み)" if st.session_state.last_was_refresh else random.choice(s["refresh_list"] + GAME_LIST if can_game else s["refresh_list"])
+        }
+        st.rerun()
+        
+    if st.session_state.rolled_options:
+        st.markdown("<div id='roulette-result'></div>", unsafe_allow_html=True)
+        components.html("""
+        <script>
+            let attempts = 0;
+            const scrollInt = setInterval(() => {
+                const el = window.parent.document.getElementById('roulette-result');
+                if(el) {
+                    el.scrollIntoView({behavior: 'smooth', block: 'center'});
+                    clearInterval(scrollInt);
+                }
+                attempts++;
+                if(attempts > 20) clearInterval(scrollInt);
+            }, 100);
+        </script>
+        """, height=0)
+
+        ro = st.session_state.rolled_options
+        with st.form("sel"):
+            ch = [f"【勉強】 {ro['勉強']}"]
+            if not st.session_state.last_was_refresh: ch.append(f"【気分転換】 {ro['気分転換']}")
+            sm = st.radio("実行タスク:", ch)
+            if st.form_submit_button("集中モードへ！"):
+                cat = "勉強" if "【勉強】" in sm else "気分転換"
+                tn = sm.replace(f"【{cat}】 ", "")
+                st.session_state.current_task = {"カテゴリ": cat, "タスク": tn, "duration": 120 if "模試" in tn else random.randint(30,60) if cat=="勉強" else random.randint(15,30)}
+                st.session_state.start_time = time.time()
+                st.session_state.last_was_refresh = (cat == "気分転換")
+                st.session_state.rolled_options = None 
+                st.session_state.page = 'active'
+                st.session_state.compact_mode = False # アクティブ遷移時は一旦フルサイズにする
+                st.rerun()
+
+# ----------------------------------------------------
+# 画面2: アクティブ（集中モード）
+# ----------------------------------------------------
+elif st.session_state.page == 'active':
+    t = st.session_state.current_task
+    dms = t['duration'] * 60000
+    show_timer_js = "true" if t['カテゴリ'] == "気分転換" else "false"
+
+    # ===============================================
+    # パターンA： 没入(コンパクト)モード ON
+    # ===============================================
+    if st.session_state.compact_mode:
+        if st.button("🗖 拡大表示に戻す", help="終了する場合はここを押して元の画面に戻ってください"):
+            st.session_state.compact_mode = False
             st.rerun()
+
+        # 左上に「文字＋半透明の無地背景（座布団）」のパネルだけを描画し、SOS等のボタンは一切出さない！
+        js_compact = f"""
+        <style>
+            body {{ margin: 0; padding: 0; font-family: sans-serif; }}
+            .panel {{
+                background: rgba(0, 0, 0, 0.75);
+                padding: 15px 25px;
+                border-radius: 12px;
+                display: inline-block;
+                backdrop-filter: blur(5px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+            }}
+            .task-name {{ font-size: 1.2rem; color: #fff; font-weight: bold; margin-bottom: 5px; }}
+            .timer {{ font-size: 2.5rem; color: #4CAF50; font-family: monospace; font-weight: bold; text-shadow: 0 0 10px #4CAF50; }}
+            .alarm {{ display: none; font-size: 1.2rem; font-weight: bold; color: #ffeb3b; margin-top: 5px; }}
+            .stoic-msg {{ font-size: 1rem; color: rgba(255,255,255,0.7); }}
+        </style>
+        <div class="panel">
+            <div class="task-name">{t['タスク']}</div>
+            <div class="timer" id="t"></div>
+            <div class="alarm" id="alarm-msg">⏰ 終了！拡大して記録してください</div>
+        </div>
+        
+        <script>
+            if(!sessionStorage.getItem('s')) sessionStorage.setItem('s', Date.now());
+            const e = parseInt(sessionStorage.getItem('s')) + {dms};
+            const show = {show_timer_js};
             
-    with col2:
-        if task['カテゴリ'] == "勉強":
-            if st.button("🚨 集中切れ！(SOS)", use_container_width=True):
-                elapsed_minutes = int((time.time() - st.session_state.start_time) / 60)
-                st.session_state.study_time_total += elapsed_minutes
-                log_activity(task['タスク'], "勉強(中断)", elapsed_minutes, task['BGM'], "集中切れSOS")
+            const tick = setInterval(() => {{
+                const now = Date.now();
+                const remain = Math.max(0, e - now);
+                const tEl = document.getElementById('t');
                 
+                if (show) {{ 
+                    tEl.innerText = Math.floor(remain/60000).toString().padStart(2,'0') + ":" + Math.floor((remain%60000)/1000).toString().padStart(2,'0');
+                    if (now >= e && !sessionStorage.getItem('played')) {{
+                        sessionStorage.setItem('played', 'true');
+                        tEl.style.display = 'none';
+                        document.getElementById('alarm-msg').style.display = 'block';
+                        try {{
+                            const actx = new (window.AudioContext || window.webkitAudioContext)();
+                            const osc = actx.createOscillator();
+                            osc.type = 'square'; osc.frequency.setValueAtTime(440, actx.currentTime);
+                            osc.connect(actx.destination); osc.start(); setTimeout(()=>osc.stop(),1500);
+                        }} catch(err) {{}}
+                    }}
+                }} else {{ 
+                    if (now < e) {{
+                        tEl.innerText = "集中モード実行中...";
+                        tEl.className = "stoic-msg";
+                    }} else {{
+                        tEl.innerText = "✅ 達成！拡大して記録";
+                        tEl.style.fontSize = "1.1rem";
+                        tEl.style.color = "#ffeb3b";
+                        clearInterval(tick);
+                    }}
+                }}
+            }}, 200);
+        </script>
+        """
+        components.html(js_compact, height=150)
+
+    # ===============================================
+    # パターンB： 通常表示（フルサイズ）モード
+    # ===============================================
+    else:
+        btn_col, _ = st.columns([1, 15])
+        with btn_col:
+            if st.button("🗕", help="没入表示（背景メイン）にする"):
+                st.session_state.compact_mode = True
+                st.rerun()
+
+        st.markdown(f"<h1 style='text-align:center;font-size:3rem;text-shadow:2px 2px 4px #000;'>{t['タスク']}</h1>", unsafe_allow_html=True)
+        if "スト6" in t['タスク']: components.html(SF6_HTML_CODE, height=650, scrolling=True)
+        
+        js_full = f"""
+        <div id="t" style="text-align:center;font-size:7rem;color:#4CAF50;font-family:monospace;font-weight:bold;text-shadow:0 0 20px #4CAF50;"></div>
+        <div id="alarm-msg" style="display:none; text-align:center; font-size:4rem; font-weight:bold; color:white; background:rgba(255,0,0,0.8); padding:20px; border-radius:10px; backdrop-filter:blur(10px);">⏰ 終了時間です！</div>
+        
+        <script>
+            if(!sessionStorage.getItem('s')) sessionStorage.setItem('s', Date.now());
+            const e = parseInt(sessionStorage.getItem('s')) + {dms};
+            const show = {show_timer_js};
+            
+            const tick = setInterval(() => {{
+                const now = Date.now();
+                const remain = Math.max(0, e - now);
+                const tEl = document.getElementById('t');
+                
+                const btns = Array.from(window.parent.document.querySelectorAll('button'));
+                const endBtn = btns.find(b => b.innerText.includes('終了して記録') || b.textContent.includes('終了して記録'));
+
+                if (show) {{ 
+                    tEl.innerText = Math.floor(remain/60000).toString().padStart(2,'0') + ":" + Math.floor((remain%60000)/1000).toString().padStart(2,'0');
+                    if (now >= e && !sessionStorage.getItem('played')) {{
+                        sessionStorage.setItem('played', 'true');
+                        tEl.style.display = 'none';
+                        document.getElementById('alarm-msg').style.display = 'block';
+                        try {{
+                            const actx = new (window.AudioContext || window.webkitAudioContext)();
+                            const osc = actx.createOscillator();
+                            osc.type = 'square'; osc.frequency.setValueAtTime(440, actx.currentTime);
+                            osc.connect(actx.destination); osc.start(); setTimeout(()=>osc.stop(),1500);
+                        }} catch(err) {{}}
+                    }}
+                }} else {{ 
+                    if (now < e) {{
+                        tEl.innerText = "予定時間: ？？？ 分\\n（見事達成するまで終了ボタンは出現しません）";
+                        tEl.style.fontSize = "1.5rem";
+                        tEl.style.color = "rgba(255,255,255,0.7)";
+                        tEl.style.textShadow = "none";
+                        if (endBtn) endBtn.style.display = 'none';
+                    }} else {{
+                        tEl.innerText = "✅ 規定時間が終了しました！\\n記録して終了できます。";
+                        tEl.style.fontSize = "2rem";
+                        tEl.style.color = "#ffeb3b";
+                        if (endBtn) endBtn.style.display = 'inline-flex';
+                        clearInterval(tick);
+                    }}
+                }}
+            }}, 200);
+        </script>
+        """
+        components.html(js_full, height=200)
+
+        st.divider()
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("■ 終了して記録する", use_container_width=True, type="primary"):
+                em = int((time.time() - st.session_state.start_time) / 60)
+                if t['カテゴリ'] == "勉強": st.session_state.study_time_total += em
+                else: st.session_state.refresh_time_total += em
+                log_activity(t['タスク'], t['カテゴリ'], em, "設定BGM")
                 components.html("<script>sessionStorage.clear();</script>", height=0)
                 time.sleep(0.5)
-                
+                st.session_state.page = 'dashboard'
+                st.rerun()
+        with c2:
+            if t['カテゴリ'] == "勉強" and st.button("🚨 集中切れ！(SOS)", use_container_width=True):
+                em = int((time.time() - st.session_state.start_time) / 60)
+                st.session_state.study_time_total += em
+                log_activity(t['タスク'], "中断", em, "設定BGM", "集中切れ")
+                components.html("<script>sessionStorage.clear();</script>", height=0)
+                time.sleep(0.5)
                 st.session_state.sos_task = random.choice(SOS_LIST)
                 st.session_state.page = 'sos'
                 st.rerun()
 
-# ==========================================
+# ----------------------------------------------------
 # 画面3: SOS（緊急リセットモード）
-# ==========================================
+# ----------------------------------------------------
 elif st.session_state.page == 'sos':
     st.warning("集中力が切れましたね。自分を責めず、一旦リセットしましょう！")
-    st.markdown(f"<h2 style='text-align: center;'>緊急指令：【{st.session_state.sos_task}】 を実行せよ！</h2>", unsafe_allow_html=True)
-    
-    if st.session_state.sos_task == "Geminiと話す":
-        st.info("💡 チャットを開いて、「今集中が切れて辛い」「何が原因か分からない」と正直に打ち明けてみてください。いつでも壁打ち相手になります。")
-
-    if st.button("リセット完了！ダッシュボードへ戻る", use_container_width=True):
-        log_activity(st.session_state.sos_task, "SOSリセット", 0, "なし", "SOS完了")
+    st.markdown(f"<h2 style='text-align:center;'>緊急指令：【{st.session_state.sos_task}】</h2>", unsafe_allow_html=True)
+    if st.button("ダッシュボードへ戻る", use_container_width=True):
         st.session_state.page = 'dashboard'
         st.rerun()
-
-# --- サイドバー：ログの確認とエクスポート ---
-with st.sidebar:
-    st.header("データ管理")
-    st.write("※アプリを閉じる前に必ずダウンロードしてください")
-    if st.session_state.logs:
-        df = pd.DataFrame(st.session_state.logs)
-        st.dataframe(df)
-        csv = df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("履歴をCSVでダウンロード", data=csv, file_name="activity_log.csv", mime="text/csv")
