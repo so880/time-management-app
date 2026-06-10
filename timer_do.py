@@ -187,7 +187,7 @@ BGM_PLAYER_HTML = """
         var firstScriptTag = document.getElementsByTagName('script')[0]; firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         var player;
         function onYouTubeIframeAPIReady() { player = new YT.Player('ytplayer', { height: '0', width: '0', playerVars: { 'autoplay': 0, 'controls': 0 } }); }
-        const vids = { 'cafe': 'e_04ZrNroTo', 'chat': 'bZ2XhA_kXYQ', 'relax': 'vPhg6sc1Mk4' };
+        const vids = { 'cafe': '35TNX72bGOQ', 'chat': 'q_Ldlk4kthQ', 'relax': 'vPhg6sc1Mk4' };
         function playVid(t) { if(player) { player.loadPlaylist({playlist:[vids[t]], index:0}); player.setLoop(true); } }
         function stopVid() { if(player) player.stopVideo(); }
     </script>
